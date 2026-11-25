@@ -1,0 +1,20 @@
+{
+  "name": "ai-says",
+  "version": "0.1.0",
+  "description": "AI Says – an MCP server that sends real-world tasks to your phone",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "hub": "node build/hub.js",
+    "mcp": "node build/mcp.js",
+    "inspector": "npx @modelcontextprotocol/inspector node build/mcp.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.6"
+  }
+}

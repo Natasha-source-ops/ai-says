@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14213D">
+<title>AI Says</title>
+<style>
+  :root {
+    --navy: #14213D; --navy-2: #22305A; --cream: #F6F4EF; --muted: #C9D3E3;
+    --orange: #F08A4B; --orange-dark: #D9622B; --green: #3FA36B; --grey: #8F9BB3;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--navy); color: var(--cream);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; min-height: 100dvh;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 4px 4px 16px; }
+  .logo { font-weight: 800; font-size: 22px; letter-spacing: .5px; }
+  .logo span { color: var(--orange); }
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grey); }
+  .dot.on { background: var(--green); }
+
+  main { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+
+  .waiting { text-align: center; color: var(--muted); }
+  .pulse {
+    width: 96px; height: 96px; border-radius: 50%; margin: 0 auto 24px;
+    background: var(--navy-2); display: grid; place-items: center; font-size: 40px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { transform: scale(1); opacity: .8 } 50% { transform: scale(1.08); opacity: 1 } }
+  .waiting h2 { color: var(--cream); font-size: 22px; margin-bottom: 8px; }
+  .waiting p { font-size: 15px; line-height: 1.5; }
+
+  .card {
+    background: var(--cream); color: var(--navy); border-radius: 24px; padding: 28px 22px 22px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); animation: pop .35s ease-out;
+  }
+  @keyframes pop { from { transform: translateY(20px) scale(.97); opacity: 0 } to { transform: none; opacity: 1 } }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px; color: #B04A17;
+    background: #FBE4D6; padding: 6px 12px; border-radius: 999px;
+  }
+  .task-text { font-size: 30px; font-weight: 800; line-height: 1.2; margin: 18px 0 20px; overflow-wrap: anywhere; }
+  .song {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--navy); color: var(--cream); border-radius: 16px; padding: 14px 16px; margin-bottom: 18px;
+  }
+  .song small { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .song b { font-size: 16px; }
+  .song a {
+    flex-shrink: 0; background: #1DB954; color: #0B1F12; font-weight: 700; font-size: 14px;
+    text-decoration: none; padding: 10px 14px; border-radius: 999px;
+  }
+  textarea {
+    width: 100%; min-height: 84px; resize: vertical; border: 2px solid #E2DED5; border-radius: 14px;
+    padding: 12px 14px; font: inherit; font-size: 16px; color: var(--navy); background: #FDFCF9; margin-bottom: 14px;
+  }
+  textarea:focus { outline: none; border-color: var(--orange-dark); }
+  .buttons { display: flex; gap: 10px; }
+  button {
+    border: 0; border-radius: 16px; font: inherit; font-weight: 800; font-size: 18px; padding: 18px; cursor: pointer;
+  }
+  .done { flex: 1; background: var(--orange-dark); color: var(--navy); }
+  .skip { background: #E9E5DC; color: var(--navy); }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .5; }
+
+  .flash { text-align: center; font-size: 22px; font-weight: 800; color: var(--orange); padding: 24px; }
+
+  details { margin-top: 18px; color: var(--muted); }
+  summary { cursor: pointer; font-size: 14px; padding: 8px 4px; }
+  .hist { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .hist li { background: var(--navy-2); border-radius: 12px; padding: 10px 12px; font-size: 14px; line-height: 1.4; }
+  .hist .meta { font-size: 12px; color: var(--grey); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">AI <span>Says</span></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">Verbinde…</span></div>
+</header>
+
+<main id="main"></main>
+
+<details>
+  <summary>Verlauf</summary>
+  <ul class="hist" id="hist"></ul>
+</details>
+
+<script>
+  const ICON = { move: "🧭", dance: "💃", explain: "👀", other: "✨" };
+  const LABEL = { move: "Bewegen", dance: "Tanzen", explain: "Erklären", other: "Aufgabe" };
+  const main = document.getElementById("main");
+  const hist = document.getElementById("hist");
+  let tasks = [];
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function current() {
+    return tasks.find((t) => t.status === "pending");
+  }
+
+  function render() {
+    const t = current();
+    if (!t) {
+      main.innerHTML = `
+        <div class="waiting">
+          <div class="pulse">🤖</div>
+          <h2>Warte auf die nächste Aufgabe…</h2>
+          <p>Bitte die KI um eine Challenge.<br>Neue Aufgaben erscheinen hier automatisch.</p>
+        </div>`;
+    } else {
+      const song = t.song
+        ? `<div class="song"><div><small>Song</small><b>${esc(t.song)}</b></div>
+             <a href="https://open.spotify.com/search/${encodeURIComponent(t.song)}" target="_blank" rel="noopener">▶ Spotify</a></div>`
+        : "";
+      main.innerHTML = `
+        <div class="card">
+          <span class="chip">${ICON[t.type] ?? "✨"} ${LABEL[t.type] ?? "Aufgabe"}</span>
+          <div class="task-text">${esc(t.text)}</div>
+          ${song}
+          <textarea id="answer" placeholder="${t.type === "explain" ? "Deine Antwort…" : "Optional: Kommentar für die KI"}"></textarea>
+          <div class="buttons">
+            <button class="skip" id="skip">Überspringen</button>
+            <button class="done" id="done">Erledigt ✓</button>
+          </div>
+        </div>`;
+      document.getElementById("done").onclick = () => complete(t, "done");
+      document.getElementById("skip").onclick = () => complete(t, "skipped");
+    }
+    hist.innerHTML = tasks
+      .filter((x) => x.status !== "pending")
+      .slice()
+      .reverse()
+      .map((x) => `<li>${ICON[x.type] ?? "✨"} ${esc(x.text)}
+        <div class="meta">${x.status === "done" ? "erledigt" : "übersprungen"}${x.answer ? " · „" + esc(x.answer) + "“" : ""}</div></li>`)
+      .join("") || "<li>Noch nichts erledigt.</li>";
+  }
+
+  async function complete(t, status) {
+    const answer = document.getElementById("answer")?.value.trim();
+    document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try {
+      const res = await fetch(`/api/tasks/${t.id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, answer }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      upsert((await res.json()).task);
+      main.innerHTML = `<div class="flash">${status === "done" ? "Stark! 🎉" : "Okay, übersprungen."}</div>`;
+      setTimeout(render, 900);
+    } catch (e) {
+      alert("Fehler: " + e.message);
+      render();
+    }
+  }
+
+  function upsert(task) {
+    const i = tasks.findIndex((x) => x.id === task.id);
+    if (i >= 0) tasks[i] = task;
+    else tasks.push(task);
+  }
+
+  function connect() {
+    const es = new EventSource("/events");
+    const setConn = (on) => {
+      document.getElementById("dot").classList.toggle("on", on);
+      document.getElementById("conn").textContent = on ? "Verbunden" : "Getrennt – verbinde neu…";
+    };
+    es.addEventListener("hello", (e) => {
+      setConn(true);
+      tasks = JSON.parse(e.data).tasks;
+      render();
+    });
+    es.addEventListener("task", (e) => {
+      upsert(JSON.parse(e.data));
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      render();
+    });
+    es.addEventListener("update", (e) => {
+      upsert(JSON.parse(e.data));
+      if (!document.getElementById("answer")) render();
+    });
+    es.onerror = () => setConn(false);
+  }
+
+  render();
+  connect();
+</script>
+</body>
+</html>
