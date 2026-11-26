@@ -45,6 +45,13 @@ Dann z. B. sagen:
 - „Frag mich, was ich gerade sehe, und erklär mir etwas darüber.“
 - Oder den Prompt **start_challenge** auswählen.
 
+## Demo-Ansicht: Was passiert bei einem Tool-Aufruf?
+Wenn der Hub läuft, im Browser öffnen: **http://localhost:3030/demo**
+
+Links siehst du live jeden Schritt (Claude → MCP-Client → MCP-Server → Hub → Mensch),
+den Code, der gerade läuft, und die echte JSON-RPC-Nachricht. Rechts ist die AI-Says-Seite,
+auf der der Mensch „Erledigt“ klickt. Daneben Claude öffnen und einen Prompt schreiben.
+
 ## MCP-Bausteine
 
 | Baustein | Name | Zweck |

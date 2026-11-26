@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 
-// Needs the hub running:  npm run hub
 // HUB_URL defaults to http://localhost:3030
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,6 +8,20 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 const HUB = process.env.HUB_URL ?? "http://localhost:3030";
+
+//shown live at localhost:3030/demo.
+let traceCounter = 0;
+function trace(ev: Record<string, unknown>): Promise<void> {
+  const ts = Date.now() + (++traceCounter % 1000) / 1000; // keeps the order of events in the same millisecond
+  return fetch(HUB + "/api/trace", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...ev, ts }),
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
 
 interface Task {
   id: string;
@@ -62,16 +75,23 @@ server.registerTool(
     },
   },
   async ({ text: taskText, type, song, waitSeconds }) => {
+    await trace({ kind: "step", step: "validate", args: { text: taskText, type, song, waitSeconds } });
     // Safety rule lives in the server, not in the prompt:
     if (/\b(stra(ss|ß)e überqueren|auto fahren|klettern|messer|feuer)\b/i.test(taskText)) {
+      await trace({ kind: "step", step: "safety-blocked", text: taskText });
       return fail("Abgelehnt: Diese Aufgabe ist nicht sicher. Bitte eine harmlose Aufgabe für drinnen senden.");
     }
+    await trace({ kind: "step", step: "safety-ok", text: taskText });
     try {
-      const { task, phonesConnected } = await hub("/api/tasks", { method: "POST", body: JSON.stringify({ text: taskText, type, song }) });
+      await trace({ kind: "step", step: "to-hub", body: { text: taskText, type, song } });
+      const { task, phonesConnected } = await hub("/api/tasks",
+        { method: "POST", body: JSON.stringify({ text: taskText, type, song }) });
       if (phonesConnected === 0) {
         return text(`Aufgabe ${task.id} gespeichert, aber gerade ist kein Handy verbunden. Der Mensch sieht sie, sobald er die Seite öffnet.`);
       }
+      await trace({ kind: "step", step: "wait", id: task.id, waitSeconds });
       const { task: result } = await hub(`/api/tasks/${task.id}?wait=${waitSeconds}`);
+      await trace({ kind: "step", step: "result", task: result });
       return text(describe(result));
     } catch (e) {
       return fail((e as Error).message);
@@ -157,5 +177,26 @@ server.registerPrompt(
   }),
 );
 
-await server.connect(new StdioServerTransport());
+const transport = new StdioServerTransport();
+await server.connect(transport);
+
+//  JSON-RPC messages between client and server.
+const openRequests = new Map<string | number, string>();
+const handleIncoming = transport.onmessage;
+transport.onmessage = (message: any, extra?: any) => {
+  if (message?.method && message.method !== "ping") {
+    if (message.id !== undefined) openRequests.set(message.id, message.method);
+    trace({ kind: "rpc-in", method: message.method, json: message });
+  }
+  (handleIncoming as any)?.(message, extra);
+};
+const sendOutgoing = transport.send.bind(transport);
+(transport as any).send = (message: any, options?: any) => {
+  if (message && message.id !== undefined && !message.method && openRequests.has(message.id)) {
+    const method = openRequests.get(message.id);
+    openRequests.delete(message.id);
+    trace({ kind: "rpc-out", method, json: message });
+  }
+  return (sendOutgoing as any)(message, options);
+};
 console.error(`ai-says MCP server läuft (stdio), Hub: ${HUB}`);

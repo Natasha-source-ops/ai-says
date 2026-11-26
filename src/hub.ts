@@ -31,6 +31,16 @@ const tasks: Task[] = [];
 const waiters = new Map<string, Array<(t: Task) => void>>();
 const phones = new Set<http.ServerResponse>();
 
+// Demo view (localhost:3030/demo): live trace of what happens during a tool call
+const traceViewers = new Set<http.ServerResponse>();
+let traceSeq = 0;
+
+function trace(ev: Record<string, unknown>) {
+  const event = { ...ev, ts: Number(ev.ts ?? Date.now()), seq: ++traceSeq };
+  const msg = `event: trace\ndata: ${JSON.stringify(event)}\n\n`;
+  for (const res of traceViewers) res.write(msg);
+}
+
 // ---------- helpers ----------
 
 function send(res: http.ServerResponse, code: number, body: unknown) {
@@ -38,11 +48,11 @@ function send(res: http.ServerResponse, code: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: http.IncomingMessage): Promise<any> {
+async function readJson(req: http.IncomingMessage, maxLength = 10_000): Promise<any> {
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 10_000) throw new Error("Body zu groß");
+    if (raw.length > maxLength) throw new Error("Body zu groß");
   }
   return raw ? JSON.parse(raw) : {};
 }
@@ -98,6 +108,25 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Live stream for the demo view
+    if (req.method === "GET" && url.pathname === "/trace-events") {
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+      res.write(": connected\n\n");
+      traceViewers.add(res);
+      const ping = setInterval(() => res.write(": ping\n\n"), 20_000);
+      req.on("close", () => {
+        clearInterval(ping);
+        traceViewers.delete(res);
+      });
+      return;
+    }
+
+    // The MCP server reports its steps here
+    if (req.method === "POST" && url.pathname === "/api/trace") {
+      trace({ ...(await readJson(req, 200_000)), source: "mcp" });
+      return send(res, 200, { ok: true });
+    }
+
     // REST API
     if (parts[0] === "api" && parts[1] === "tasks") {
       if (req.method === "GET" && parts.length === 2) return send(res, 200, { tasks, phonesConnected: phones.size });
@@ -117,6 +146,7 @@ const server = http.createServer(async (req, res) => {
         };
         tasks.push(task);
         broadcast("task", task);
+        trace({ kind: "step", step: "hub-stored", task });
         return send(res, 201, { task, phonesConnected: phones.size });
       }
 
@@ -135,6 +165,7 @@ const server = http.createServer(async (req, res) => {
         task.answer = body.answer ? String(body.answer).slice(0, 1000) : undefined;
         task.finishedAt = new Date().toISOString();
         broadcast("update", task);
+        trace({ kind: "step", step: "human-done", task });
         finish(task);
         return send(res, 200, { task });
       }
@@ -142,7 +173,7 @@ const server = http.createServer(async (req, res) => {
 
     // Static files (phone page)
     if (req.method === "GET") {
-      const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      const file = url.pathname === "/" ? "index.html" : url.pathname === "/demo" ? "demo.html" : url.pathname.slice(1);
       const full = path.join(PUBLIC_DIR, file);
       if (!full.startsWith(PUBLIC_DIR)) return send(res, 403, { error: "verboten" });
       try {
@@ -163,5 +194,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`\nAI Says Hub läuft auf Port ${PORT}\n`);
   console.log("Aufgaben-Seite im Browser öffnen:   http://localhost:" + PORT);
+  console.log("Demo-Ansicht (Ablauf + Code):       http://localhost:" + PORT + "/demo");
   console.log("");
 });

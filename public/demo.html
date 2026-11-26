@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Says – Was passiert gerade?</title>
+<style>
+  :root { --bg: #F7F7FD; --ink: #15153A; --muted: #6A6990; --line: #DCDAF5; --violet: #4A1FD0; --soft: #EFE9FC; --red: #C0306A; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { display: flex; height: 100vh; overflow: hidden; background: var(--bg); color: var(--ink);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 28px; padding: 32px 36px; }
+  h1 { font-size: 26px; font-weight: 800; }
+
+  /* flow */
+  .flow { display: flex; align-items: center; }
+  .node { flex: 1; min-width: 0; padding: 16px 6px; text-align: center; background: #fff;
+          border: 2px solid var(--line); border-radius: 14px; transition: all .3s ease; }
+  .node b { display: block; font-size: 17px; white-space: nowrap; }
+  .node small { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
+  .node.on { border-color: var(--violet); background: var(--soft); box-shadow: 0 0 0 4px rgba(74,31,208,.12); }
+  .node.wait { border-color: var(--violet); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(74,31,208,.10); } }
+  .link { width: 60px; flex-shrink: 0; text-align: center; color: #B9B6D3; font-size: 12px; font-weight: 700; transition: color .3s; }
+  .link span { display: block; font-size: 20px; line-height: 1; }
+  .link.on { color: var(--violet); }
+
+  /* message */
+  .msg { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff;
+         border: 2px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .msg-head { padding: 16px 22px; border-bottom: 2px solid var(--line); }
+  .msg-head b { font-size: 20px; }
+  .msg-head span { display: block; margin-top: 4px; font-size: 14px; color: var(--muted); }
+  .msg.bad { border-color: var(--red); }
+  .msg.bad .msg-head b { color: var(--red); }
+  pre { flex: 1; overflow: auto; padding: 18px 22px; font: 16px/1.6 "SF Mono", Menlo, Consolas, monospace;
+        white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  .k { color: var(--violet); } .s { color: #2E7D5B; } .n { color: #B5651D; }
+  .empty { color: var(--muted); font: 16px/1.5 -apple-system, sans-serif; }
+
+  .app { width: 380px; flex-shrink: 0; border-left: 2px solid var(--line); }
+  .app iframe { width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+
+<section class="main">
+  <h1>Was passiert bei einem Tool‑Aufruf?</h1>
+
+  <div class="flow">
+    <div class="node" data-n="host"><b>Claude</b><small>Host</small></div>
+    <div class="link" data-l="a"><span>⇄</span></div>
+    <div class="node" data-n="client"><b>MCP‑Client</b><small>in Claude</small></div>
+    <div class="link" data-l="b"><span>⇄</span>JSON‑RPC</div>
+    <div class="node" data-n="server"><b>MCP‑Server</b><small>AI Says</small></div>
+    <div class="link" data-l="c"><span>⇄</span>REST</div>
+    <div class="node" data-n="browser"><b>Browser</b><small>Mensch</small></div>
+  </div>
+
+  <div class="msg" id="msg">
+    <div class="msg-head"><b id="title">Bereit</b><span id="route">Schreib einen Prompt in Claude, z. B. „Schick mir eine Aufgabe“.</span></div>
+    <pre id="json"><span class="empty">Hier erscheint die Nachricht, die gerade gesendet wird.</span></pre>
+  </div>
+</section>
+
+<aside class="app"><iframe src="/" title="AI Says"></iframe></aside>
+
+<script>
+// Each live event -> which parts light up, a short title, and the message to show.
+function describe(ev) {
+  const m = ev.method;
+  if (ev.kind === "rpc-in" && m === "tools/list")
+    return { t: "Claude fragt: Welche Tools gibt es?", r: "Client → Server · tools/list", on: ["client", "server"], l: ["b"], j: ev.json };
+  if (ev.kind === "rpc-out" && m === "tools/list") {
+    // gekürzt: nur Name + Titel jedes Tools (die volle Antwort enthält auch Beschreibung und Parameter)
+    const tools = (ev.json?.result?.tools ?? []).map((t) => ({ name: t.name, title: t.title }));
+    return { t: "Ja, AI Says ist ein MCP‑Server, der mit dieser Sitzung verbunden ist.", r: `Server → Client · ${tools.length} Tools (gekürzt)`, on: ["server", "client"], l: ["b"], j: { jsonrpc: "2.0", id: ev.json?.id, result: { tools } } };
+  }
+  if (ev.kind === "rpc-in" && m === "tools/call")
+    return { t: `Claude ruft das Tool „${ev.json?.params?.name}“ auf`, r: "Client → Server · tools/call", on: ["host", "client", "server"], l: ["a", "b"], j: ev.json };
+  if (ev.kind === "rpc-out" && m === "tools/call") {
+    const bad = ev.json?.result?.isError;
+    return { t: bad ? "Server meldet einen Fehler an Claude" : "Ergebnis geht zurück an Claude", r: "Server → Client → Claude", on: ["server", "client", "host"], l: ["a", "b"], j: ev.json, bad };
+  }
+  switch (ev.step) {
+    case "safety-blocked": return { t: "Abgelehnt: Aufgabe ist nicht sicher", r: "Die Regel steckt im Server", on: ["server"], j: { text: ev.text }, bad: true };
+    case "to-hub":     return { t: "Server schickt die Aufgabe an den Browser", r: "Server → Browser · POST /api/tasks", on: ["server", "browser"], l: ["c"], j: ev.body };
+    case "wait":       return { t: "Warten auf den Menschen …", r: "Rechts auf „Erledigt“ klicken", on: ["server"], wait: "browser", l: ["c"] };
+    case "human-done": return { t: ev.task?.status === "skipped" ? "Mensch hat übersprungen" : "Mensch hat „Erledigt“ geklickt", r: "Browser → Server", on: ["browser", "server"], l: ["c"], j: ev.task };
+  }
+  return null; // other internal steps are not shown
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+function color(obj) {
+  let s = JSON.stringify(obj, null, 2) ?? "";
+  if (s.length > 3000) s = s.slice(0, 3000) + "\n…";
+  return s.replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(-?\d+(?:\.\d+)?|true|false|null)\b|[^"\w]+|\w+/g, (m, str, colon, lit) =>
+    str ? (colon ? `<span class="k">${esc(str)}</span>${colon}` : `<span class="s">${esc(str)}</span>`) : lit ? `<span class="n">${lit}</span>` : esc(m));
+}
+
+function show(d) {
+  document.querySelectorAll(".node").forEach((n) => {
+    n.classList.toggle("on", d.on.includes(n.dataset.n));
+    n.classList.toggle("wait", d.wait === n.dataset.n);
+  });
+  document.querySelectorAll(".link").forEach((l) => l.classList.toggle("on", (d.l ?? []).includes(l.dataset.l)));
+  $("msg").classList.toggle("bad", !!d.bad);
+  $("title").textContent = d.t;
+  $("route").textContent = d.r;
+  if (d.j !== undefined) $("json").innerHTML = color(d.j);
+}
+
+// Play events one after another, slow enough to follow.
+let queue = [], timer = null;
+function enqueue(ev) {
+  const d = describe(ev);
+  if (!d) return;
+  d.ts = ev.ts;
+  let i = queue.length;
+  while (i > 0 && queue[i - 1].ts > d.ts) i--;
+  queue.splice(i, 0, d);
+  if (!timer) next();
+}
+function next() {
+  const d = queue.shift();
+  if (!d) { timer = null; return; }
+  show(d);
+  timer = setTimeout(next, 1600);
+}
+
+new EventSource("/trace-events").addEventListener("trace", (e) => enqueue(JSON.parse(e.data)));
+</script>
+</body>
+</html>
